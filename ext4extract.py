@@ -116,7 +116,20 @@ class Ext4:
             (inode_bg_num * self._superblock.s_blocks_per_group * self._block_size) \
             + (group_desc.bg_inode_table_lo * self._block_size) + (bg_inode_idx * self._superblock.s_inode_size)
         self._ext4.seek(inode_offset)
-        return self.__Inode__._make(unpack(self.__INODE_PACK__, self._ext4.read(128)))
+        return self.__Inode__._make(unpack(self.__INODE_PACK__, self._ext4.read(128))), inode_bg_num
+
+    def _read_data(self, bg, inode):
+        data = b''
+
+        if inode.i_flags & 0x10000000:
+            data = inode.i_block
+        elif inode.i_flags & 0x80000:
+            print("Inode uses extents")
+            pass  # TODO read data by extents
+        else:
+            raise RuntimeError("Mapping Inodes not supported")
+
+        return data
 
     def load(self, filename):
         self._ext4 = open(filename, "rb")
@@ -125,6 +138,16 @@ class Ext4:
         if self._superblock.s_magic != 0xef53:
             raise RuntimeError("Bad superblock magic")
         self._block_size = 2 ** (10 + self._superblock.s_log_block_size)
+
+    def readdir(self, inode_num):
+        inode, bg = self._read_inode(inode_num)
+        # noinspection PyTypeChecker
+        dir_data = self._read_data(bg, inode)
+        return dir_data  # TODO make list of dicts
+
+    @property
+    def root(self):
+        return self.readdir(2)
 
 
 class Application(object):
@@ -146,7 +169,7 @@ class Application(object):
 
     def __do_extract(self):
         ext4 = Ext4(self._args.filename)
-        print(ext4)
+        print(ext4.root)
 
     def run(self):
         self.__parse_args()
