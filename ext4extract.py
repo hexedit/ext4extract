@@ -4,9 +4,10 @@ import sys
 import argparse
 from struct import unpack
 from collections import namedtuple
+import os
 
 
-class Ext4:
+class Ext4(object):
     __SUPERBLOCK_PACK__ = "<IIIIIIIIIIIIIHHHHHHIIIIHHIHHIII16s16s64sI"
     __GROUP_DESCRIPTOR_PACK__ = "<IIIHHHHIHHHH"
     __INODE_PACK__ = "<HHIIIIIHHII4s60sIIII12s"
@@ -202,9 +203,9 @@ class Ext4:
         return self.__Inode__._make(unpack(self.__INODE_PACK__, self._ext4.read(128))), inode_bg_num
 
     def _read_extent(self, data, bg, extent_block):
-        if data is None:
-            data = b''
         hdr = self.__ExtentHeader__._make(unpack(self.__EXTENT_HEADER_PACK__, extent_block[:12]))
+        if hdr.eh_magic != 0xf30a:
+            raise RuntimeError("Bad extent magic")
 
         for eex in range(0, hdr.eh_entries):
             raw_offset = 12 + (eex * 12)
@@ -212,7 +213,7 @@ class Ext4:
             if hdr.eh_depth == 0:
                 entry = self.__ExtentEntry__._make(unpack(self.__EXTENT_ENTRY_PACK__, entry_raw))
                 self._ext4.seek((bg * self._superblock.s_blocks_per_group + entry.ee_start_lo) * self._block_size)
-                data += self._ext4.read(self._block_size)
+                data += self._ext4.read(self._block_size * entry.ee_len)
             else:
                 index = self.__ExtentIndex__._make(unpack(self.__EXTENT_INDEX_PACK__, entry_raw))
                 self._ext4.seek((bg * self._superblock.s_blocks_per_group + index.ei_leaf_lo) * self._block_size)
@@ -222,17 +223,14 @@ class Ext4:
         return data
 
     def _read_data(self, bg, inode):
-        data = None
+        data = b''
 
-        if inode.i_flags & 0x10000000:
+        if inode.i_flags & 0x10000000 or (inode.i_mode & 0xa000 and inode.i_size_lo <= 60):
             data = inode.i_block
         elif inode.i_flags & 0x80000:
-            eh = self.__ExtentHeader__._make(unpack(self.__EXTENT_HEADER_PACK__, inode.i_block[:12]))
-            if eh.eh_magic != 0xf30a:
-                raise RuntimeError("Bad extent magic")
             data = self._read_extent(data, bg, inode.i_block)
         else:
-            raise RuntimeError("Mapping Inodes not supported")
+            raise RuntimeError("Mapped Inodes is not supported")
 
         return data
 
@@ -244,7 +242,7 @@ class Ext4:
             raise RuntimeError("Bad superblock magic")
         self._block_size = 2 ** (10 + self._superblock.s_log_block_size)
 
-    def readdir(self, inode_num):
+    def read_dir(self, inode_num):
         inode, bg = self._read_inode(inode_num)
         # noinspection PyTypeChecker
         dir_raw = self._read_data(bg, inode)
@@ -277,16 +275,27 @@ class Ext4:
             entry.name = dir_raw[offset + 8:offset + 8 + dir_entry.name_len].decode('utf-8')
             dir_data.append(entry)
             offset += dir_entry.rec_len
-        return dir_data  # TODO make list of dicts
+        return dir_data
+
+    def read_file(self, inode_num):
+        inode, bg = self._read_inode(inode_num)
+        # noinspection PyTypeChecker
+        return self._read_data(bg, inode)[:inode.i_size_lo], inode.i_atime, inode.i_mtime
+
+    def read_link(self, inode_num):
+        inode, bg = self._read_inode(inode_num)
+        # noinspection PyTypeChecker
+        return self._read_data(bg, inode).decode('utf-8')[:inode.i_size_lo]
 
     @property
     def root(self):
-        return self.readdir(2)
+        return self.read_dir(2)
 
 
 class Application(object):
     def __init__(self):
         self._args = None
+        self._ext4 = None
 
     def _parse_args(self):
         parser = argparse.ArgumentParser()
@@ -296,17 +305,52 @@ class Application(object):
         parser.add_argument("-D", "--directory", dest='directory', type=str, help="set output directory", default=".")
         parser.add_argument("filename", type=str, help="EXT4 device or image")
 
+        group = parser.add_mutually_exclusive_group()
+        group.add_argument("--save-symlinks", help="save symlinks as is (default)", action='store_true')
+        group.add_argument("--text-symlinks", help="save symlinks as text file", action='store_true')
+        group.add_argument("--skip-symlinks", help="do not save symlinks", action='store_true')
+
         try:
             self._args = parser.parse_args()
         except SystemExit:
             sys.exit(2)
 
+    def _extract_dir(self, dir_data, path, name=None):
+        assert self._ext4 is not None
+        if name is not None:
+            path = os.path.join(path, name)
+        try:
+            os.mkdir(path)
+        except FileExistsError:
+            pass
+
+        for de in dir_data:
+            if de.type == 1:  # regular file
+                data, atime, mtime = self._ext4.read_file(de.inode)
+                file = open(os.path.join(path, de.name), 'w+b')
+                file.write(data)
+                file.close()
+                os.utime(file.name, (atime, mtime))
+            elif de.type == 2:  # directory
+                if de.name == '.' or de.name == '..':
+                    continue
+                self._extract_dir(self._ext4.read_dir(de.inode), path, de.name)
+            elif de.type == 7:  # symlink
+                if self._args.skip_symlinks:
+                    continue
+                link = os.path.join(path, de.name)
+                link_to = self._ext4.read_link(de.inode)
+                if self._args.text_symlinks:
+                    link = open(link, "w+b")
+                    link.write(link_to)
+                    link.close()
+                else:
+                    os.symlink(link_to, link + ".tmp")
+                    os.rename(link + ".tmp", link)
+
     def _do_extract(self):
-        ext4 = Ext4(self._args.filename)
-        print("{:10} | {:48} | {}".format("Inode", "Name", "Type"))
-        print("-----------+--------------------------------------------------+-----------------")
-        for entry in ext4.readdir(4257):
-            print(entry)
+        self._ext4 = Ext4(self._args.filename)
+        self._extract_dir(self._ext4.root, self._args.directory)
 
     def run(self):
         self._parse_args()
