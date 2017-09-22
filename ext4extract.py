@@ -10,6 +10,11 @@ class Ext4:
     __SUPERBLOCK_PACK__ = "<IIIIIIIIIIIIIHHHHHHIIIIHHIHHIII16s16s64sI"
     __GROUP_DESCRIPTOR_PACK__ = "<IIIHHHHIHHHH"
     __INODE_PACK__ = "<HHIIIIIHHII4s60sIIII12s"
+    __EXTENT_HEADER_PACK__ = "<HHHHI"
+    __EXTENT_INDEX_PACK__ = "<IIHH"
+    __EXTENT_ENTRY_PACK__ = "<IHHI"
+    __DIR_ENTRY_PACK__ = "<IHH"
+    __DIR_ENTRY_V2_PACK__ = "<IHBB"
 
     __SuperBlock__ = namedtuple('Ext4SuperBlock', """
         s_inodes_count
@@ -85,6 +90,84 @@ class Ext4:
         i_osd2
     """)
 
+    __ExtentHeader__ = namedtuple('Ext4ExtentHeader', """
+        eh_magic
+        eh_entries
+        eh_max
+        eh_depth
+        eh_generation
+    """)
+
+    __ExtentIndex__ = namedtuple('Ext4ExtentIndex', """
+        ei_block
+        ei_leaf_lo
+        ei_leaf_hi
+        ei_unused
+    """)
+
+    __ExtentEntry__ = namedtuple('Ext4ExtentEntry', """
+        ee_block
+        ee_len
+        ee_start_hi
+        ee_start_lo
+    """)
+
+    __DirEntry__ = namedtuple('Ext4DirEntry', """
+        inode
+        rec_len
+        name_len
+    """)
+
+    __DirEntryV2__ = namedtuple('Ext4DirEntryV2', """
+        inode
+        rec_len
+        name_len
+        file_type
+    """)
+
+    class DirEntry:
+        def __init__(self, inode=0, name=None, type=0):
+            self._inode = inode
+            self._name = name
+            self._type = type
+
+        def __str__(self):
+            entry_type = [
+                "Unknown",
+                "Regular file",
+                "Directory",
+                "Character device file",
+                "Block device file",
+                "FIFO",
+                "Socket",
+                "Symbolic link"
+            ][self._type]
+            return "{name:24} ({type}, inode {inode})".format(inode=self._inode, name=self._name, type=entry_type)
+
+        @property
+        def inode(self):
+            return self._inode
+
+        @property
+        def name(self):
+            return self._name
+
+        @property
+        def type(self):
+            return self._type
+
+        @inode.setter
+        def inode(self, x):
+            self._inode = x
+
+        @name.setter
+        def name(self, x):
+            self._name = x
+
+        @type.setter
+        def type(self, x):
+            self._type = x
+
     def __init__(self, filename=None):
         self._ext4 = None
         self._superblock = None
@@ -118,14 +201,36 @@ class Ext4:
         self._ext4.seek(inode_offset)
         return self.__Inode__._make(unpack(self.__INODE_PACK__, self._ext4.read(128))), inode_bg_num
 
+    def _read_extent(self, data, bg, extent_block):
+        if data is None:
+            data = b''
+        hdr = self.__ExtentHeader__._make(unpack(self.__EXTENT_HEADER_PACK__, extent_block[:12]))
+
+        for eex in range(0, hdr.eh_entries):
+            raw_offset = 12 + (eex * 12)
+            entry_raw = extent_block[raw_offset:raw_offset + 12]
+            if hdr.eh_depth == 0:
+                entry = self.__ExtentEntry__._make(unpack(self.__EXTENT_ENTRY_PACK__, entry_raw))
+                self._ext4.seek((bg * self._superblock.s_blocks_per_group + entry.ee_start_lo) * self._block_size)
+                data += self._ext4.read(self._block_size)
+            else:
+                index = self.__ExtentIndex__._make(unpack(self.__EXTENT_INDEX_PACK__, entry_raw))
+                self._ext4.seek((bg * self._superblock.s_blocks_per_group + index.ei_leaf_lo) * self._block_size)
+                lower_block = self._ext4.read(self._block_size)
+                data = self._read_extent(data, bg, lower_block)
+
+        return data
+
     def _read_data(self, bg, inode):
-        data = b''
+        data = None
 
         if inode.i_flags & 0x10000000:
             data = inode.i_block
         elif inode.i_flags & 0x80000:
-            print("Inode uses extents")
-            pass  # TODO read data by extents
+            eh = self.__ExtentHeader__._make(unpack(self.__EXTENT_HEADER_PACK__, inode.i_block[:12]))
+            if eh.eh_magic != 0xf30a:
+                raise RuntimeError("Bad extent magic")
+            data = self._read_extent(data, bg, inode.i_block)
         else:
             raise RuntimeError("Mapping Inodes not supported")
 
@@ -142,7 +247,36 @@ class Ext4:
     def readdir(self, inode_num):
         inode, bg = self._read_inode(inode_num)
         # noinspection PyTypeChecker
-        dir_data = self._read_data(bg, inode)
+        dir_raw = self._read_data(bg, inode)
+        dir_data = list()
+        offset = 0
+        while offset < len(dir_raw):
+            entry_raw = dir_raw[offset:offset + 8]
+            entry = self.DirEntry()
+            if self._superblock.s_feature_incompat & 0x2:
+                dir_entry = self.__DirEntryV2__._make(unpack(self.__DIR_ENTRY_V2_PACK__, entry_raw))
+                entry.type = dir_entry.file_type
+            else:
+                dir_entry = self.__DirEntry__._make(unpack(self.__DIR_ENTRY_PACK__, entry_raw))
+                entry_inode = self._read_inode(dir_entry.inode)
+                if entry_inode.i_mode & 0x1000:
+                    entry.type = 5
+                elif entry_inode.i_mode & 0x2000:
+                    entry.type = 3
+                elif entry_inode.i_mode & 0x4000:
+                    entry.type = 2
+                elif entry_inode.i_mode & 0x6000:
+                    entry.type = 4
+                elif entry_inode.i_mode & 0x8000:
+                    entry.type = 1
+                elif entry_inode.i_mode & 0xA000:
+                    entry.type = 7
+                elif entry_inode.i_mode & 0xC000:
+                    entry.type = 6
+            entry.inode = dir_entry.inode
+            entry.name = dir_raw[offset + 8:offset + 8 + dir_entry.name_len].decode('utf-8')
+            dir_data.append(entry)
+            offset += dir_entry.rec_len
         return dir_data  # TODO make list of dicts
 
     @property
@@ -154,7 +288,7 @@ class Application(object):
     def __init__(self):
         self._args = None
 
-    def __parse_args(self):
+    def _parse_args(self):
         parser = argparse.ArgumentParser()
 
         parser.add_argument("-v", "--verbose", dest='verbose', help="verbose output",
@@ -167,13 +301,16 @@ class Application(object):
         except SystemExit:
             sys.exit(2)
 
-    def __do_extract(self):
+    def _do_extract(self):
         ext4 = Ext4(self._args.filename)
-        print(ext4.root)
+        print("{:10} | {:48} | {}".format("Inode", "Name", "Type"))
+        print("-----------+--------------------------------------------------+-----------------")
+        for entry in ext4.readdir(4257):
+            print(entry)
 
     def run(self):
-        self.__parse_args()
-        self.__do_extract()
+        self._parse_args()
+        self._do_extract()
 
 
 if __name__ == '__main__':
