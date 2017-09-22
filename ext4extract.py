@@ -342,7 +342,7 @@ class Application(object):
                 link_to = self._ext4.read_link(de.inode)
                 if self._args.text_symlinks:
                     link = open(link, "w+b")
-                    link.write(link_to)
+                    link.write(link_to.encode('utf-8'))
                     link.close()
                 else:
                     os.symlink(link_to, link + ".tmp")
