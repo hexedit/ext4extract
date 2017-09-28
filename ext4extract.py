@@ -308,6 +308,7 @@ class Application(object):
         group = parser.add_mutually_exclusive_group()
         group.add_argument("--save-symlinks", help="save symlinks as is (default)", action='store_true')
         group.add_argument("--text-symlinks", help="save symlinks as text file", action='store_true')
+        group.add_argument("--empty-symlinks", help="save symlinks as empty file", action='store_true')
         group.add_argument("--skip-symlinks", help="do not save symlinks", action='store_true')
 
         try:
@@ -344,6 +345,8 @@ class Application(object):
                     link = open(link, "w+b")
                     link.write(link_to.encode('utf-8'))
                     link.close()
+                elif self._args.empty_symlinks:
+                    open(link, "w+").close()
                 else:
                     os.symlink(link_to, link + ".tmp")
                     os.rename(link + ".tmp", link)
