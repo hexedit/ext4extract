@@ -225,7 +225,9 @@ class Ext4(object):
     def _read_data(self, bg, inode):
         data = b''
 
-        if inode.i_flags & 0x10000000 or (inode.i_mode & 0xa000 and inode.i_size_lo <= 60):
+        if inode.i_size_lo == 0:
+            pass
+        elif inode.i_flags & 0x10000000 or (inode.i_mode & 0xf000 == 0xa000 and inode.i_size_lo <= 60):
             data = inode.i_block
         elif inode.i_flags & 0x80000:
             data = self._read_extent(data, bg, inode.i_block)
@@ -257,19 +259,20 @@ class Ext4(object):
             else:
                 dir_entry = self.__DirEntry__._make(unpack(self.__DIR_ENTRY_PACK__, entry_raw))
                 entry_inode = self._read_inode(dir_entry.inode)
-                if entry_inode.i_mode & 0x1000:
+                inode_type = entry_inode.i_mode & 0xf000
+                if inode_type == 0x1000:
                     entry.type = 5
-                elif entry_inode.i_mode & 0x2000:
+                elif inode_type == 0x2000:
                     entry.type = 3
-                elif entry_inode.i_mode & 0x4000:
+                elif inode_type == 0x4000:
                     entry.type = 2
-                elif entry_inode.i_mode & 0x6000:
+                elif inode_type == 0x6000:
                     entry.type = 4
-                elif entry_inode.i_mode & 0x8000:
+                elif inode_type == 0x8000:
                     entry.type = 1
-                elif entry_inode.i_mode & 0xA000:
+                elif inode_type == 0xA000:
                     entry.type = 7
-                elif entry_inode.i_mode & 0xC000:
+                elif inode_type == 0xC000:
                     entry.type = 6
             entry.inode = dir_entry.inode
             entry.name = dir_raw[offset + 8:offset + 8 + dir_entry.name_len].decode('utf-8')
