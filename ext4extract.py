@@ -197,12 +197,12 @@ class Ext4(object):
         bg_inode_idx = (inode_num - 1) % self._superblock.s_inodes_per_group
         group_desc = self._read_group_descriptor(inode_bg_num)
         inode_offset = \
-            (inode_bg_num * self._superblock.s_blocks_per_group * self._block_size) \
-            + (group_desc.bg_inode_table_lo * self._block_size) + (bg_inode_idx * self._superblock.s_inode_size)
+            (group_desc.bg_inode_table_lo * self._block_size) \
+            + (bg_inode_idx * self._superblock.s_inode_size)
         self._ext4.seek(inode_offset)
-        return self.__Inode__._make(unpack(self.__INODE_PACK__, self._ext4.read(128))), inode_bg_num
+        return self.__Inode__._make(unpack(self.__INODE_PACK__, self._ext4.read(128)))
 
-    def _read_extent(self, data, bg, extent_block):
+    def _read_extent(self, data, extent_block):
         hdr = self.__ExtentHeader__._make(unpack(self.__EXTENT_HEADER_PACK__, extent_block[:12]))
         if hdr.eh_magic != 0xf30a:
             raise RuntimeError("Bad extent magic")
@@ -212,17 +212,17 @@ class Ext4(object):
             entry_raw = extent_block[raw_offset:raw_offset + 12]
             if hdr.eh_depth == 0:
                 entry = self.__ExtentEntry__._make(unpack(self.__EXTENT_ENTRY_PACK__, entry_raw))
-                self._ext4.seek((bg * self._superblock.s_blocks_per_group + entry.ee_start_lo) * self._block_size)
+                self._ext4.seek(entry.ee_start_lo * self._block_size)
                 data += self._ext4.read(self._block_size * entry.ee_len)
             else:
                 index = self.__ExtentIndex__._make(unpack(self.__EXTENT_INDEX_PACK__, entry_raw))
-                self._ext4.seek((bg * self._superblock.s_blocks_per_group + index.ei_leaf_lo) * self._block_size)
+                self._ext4.seek(index.ei_leaf_lo * self._block_size)
                 lower_block = self._ext4.read(self._block_size)
-                data = self._read_extent(data, bg, lower_block)
+                data = self._read_extent(data, lower_block)
 
         return data
 
-    def _read_data(self, bg, inode):
+    def _read_data(self, inode):
         data = b''
 
         if inode.i_size_lo == 0:
@@ -230,7 +230,7 @@ class Ext4(object):
         elif inode.i_flags & 0x10000000 or (inode.i_mode & 0xf000 == 0xa000 and inode.i_size_lo <= 60):
             data = inode.i_block
         elif inode.i_flags & 0x80000:
-            data = self._read_extent(data, bg, inode.i_block)
+            data = self._read_extent(data, inode.i_block)
         else:
             raise RuntimeError("Mapped Inodes is not supported")
 
@@ -245,9 +245,9 @@ class Ext4(object):
         self._block_size = 2 ** (10 + self._superblock.s_log_block_size)
 
     def read_dir(self, inode_num):
-        inode, bg = self._read_inode(inode_num)
+        inode = self._read_inode(inode_num)
         # noinspection PyTypeChecker
-        dir_raw = self._read_data(bg, inode)
+        dir_raw = self._read_data(inode)
         dir_data = list()
         offset = 0
         while offset < len(dir_raw):
@@ -281,14 +281,14 @@ class Ext4(object):
         return dir_data
 
     def read_file(self, inode_num):
-        inode, bg = self._read_inode(inode_num)
+        inode = self._read_inode(inode_num)
         # noinspection PyTypeChecker
-        return self._read_data(bg, inode)[:inode.i_size_lo], inode.i_atime, inode.i_mtime
+        return self._read_data(inode)[:inode.i_size_lo], inode.i_atime, inode.i_mtime
 
     def read_link(self, inode_num):
-        inode, bg = self._read_inode(inode_num)
+        inode = self._read_inode(inode_num)
         # noinspection PyTypeChecker
-        return self._read_data(bg, inode).decode('utf-8')[:inode.i_size_lo]
+        return self._read_data(inode).decode('utf-8')[:inode.i_size_lo]
 
     @property
     def root(self):
