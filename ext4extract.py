@@ -329,12 +329,14 @@ class Application(object):
             pass
 
         for de in dir_data:
+            processed = False
             if de.type == 1:  # regular file
                 data, atime, mtime = self._ext4.read_file(de.inode)
                 file = open(os.path.join(path, de.name), 'w+b')
                 file.write(data)
                 file.close()
                 os.utime(file.name, (atime, mtime))
+                processed = True
             elif de.type == 2:  # directory
                 if de.name == '.' or de.name == '..':
                     continue
@@ -353,6 +355,9 @@ class Application(object):
                 else:
                     os.symlink(link_to, link + ".tmp")
                     os.rename(link + ".tmp", link)
+                processed = True
+            if processed and self._args.verbose:
+                print("Extracting: {}".format(os.path.join(path.replace(self._args.directory, ''), de.name)))
 
     def _do_extract(self):
         self._ext4 = Ext4(self._args.filename)
