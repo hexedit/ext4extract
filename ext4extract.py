@@ -288,7 +288,7 @@ class Ext4(object):
     def read_link(self, inode_num):
         inode = self._read_inode(inode_num)
         # noinspection PyTypeChecker
-        return self._read_data(inode).decode('utf-8')[:inode.i_size_lo]
+        return self._read_data(inode)[:inode.i_size_lo].decode('utf-8')
 
     @property
     def root(self):
