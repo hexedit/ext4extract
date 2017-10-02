@@ -357,7 +357,7 @@ class Application(object):
                     os.rename(link + ".tmp", link)
                 processed = True
             if processed and self._args.verbose:
-                print("Extracting: {}".format(os.path.join(path.replace(self._args.directory, ''), de.name)))
+                print(os.path.join(os.path.sep, path.lstrip(self._args.directory), de.name))
 
     def _do_extract(self):
         self._ext4 = Ext4(self._args.filename)
