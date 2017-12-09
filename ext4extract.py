@@ -26,7 +26,7 @@ import os
 
 
 class Ext4(object):
-    __SUPERBLOCK_PACK__ = "<IIIIIIIIIIIIIHHHHHHIIIIHHIHHIII16s16s64sI"
+    __SUPERBLOCK_PACK__ = "<IIIIIIIIIIIIIHHHHHHIIIIHHIHHIII16s16s64sIBBH16sIII16sBBH"
     __GROUP_DESCRIPTOR_PACK__ = "<IIIHHHHIHHHH"
     __INODE_PACK__ = "<HHIIIIIHHII4s60sIIII12s"
     __EXTENT_HEADER_PACK__ = "<HHHHI"
@@ -71,6 +71,17 @@ class Ext4(object):
         s_volume_name
         s_last_mounted
         s_algorithm_usage_bitmap
+        s_prealloc_blocks
+        s_prealloc_dir_blocks
+        s_reserved_gdt_blocks
+        s_journal_uuid
+        s_journal_inum
+        s_journal_dev
+        s_last_orphan
+        s_hash_seed
+        s_def_hash_version
+        s_jnl_backup_type
+        s_desc_size
     """)
 
     __GroupDescriptor__ = namedtuple('Ext4GroupDescriptor', """
@@ -206,8 +217,9 @@ class Ext4(object):
             return "Volume name: {}, last mounted at: {}".format(volume_name, mounted_at)
 
     def _read_group_descriptor(self, bg_num):
-        gdt_offset = (self._superblock.s_first_data_block + 1) * self._block_size + (bg_num * 64)
-        self._ext4.seek(gdt_offset)
+        gd_offset = (self._superblock.s_first_data_block + 1) * self._block_size \
+                    + (bg_num * self._superblock.s_desc_size)
+        self._ext4.seek(gd_offset)
         return self.__GroupDescriptor__._make(unpack(self.__GROUP_DESCRIPTOR_PACK__, self._ext4.read(32)))
 
     def _read_inode(self, inode_num):
@@ -250,14 +262,14 @@ class Ext4(object):
         elif inode.i_flags & 0x80000:
             data = self._read_extent(data, inode.i_block)
         else:
-            raise RuntimeError("Mapped Inodes is not supported")
+            raise RuntimeError("Mapped Inodes are not supported")
 
         return data
 
     def load(self, filename):
         self._ext4 = open(filename, "rb")
         self._ext4.seek(1024)
-        self._superblock = self.__SuperBlock__._make(unpack(self.__SUPERBLOCK_PACK__, self._ext4.read(204)))
+        self._superblock = self.__SuperBlock__._make(unpack(self.__SUPERBLOCK_PACK__, self._ext4.read(256)))
         if self._superblock.s_magic != 0xef53:
             raise RuntimeError("Bad superblock magic")
         self._block_size = 2 ** (10 + self._superblock.s_log_block_size)
