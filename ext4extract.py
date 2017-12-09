@@ -272,6 +272,10 @@ class Ext4(object):
         self._superblock = self.__SuperBlock__._make(unpack(self.__SUPERBLOCK_PACK__, self._ext4.read(256)))
         if self._superblock.s_magic != 0xef53:
             raise RuntimeError("Bad superblock magic")
+        incompat = self._superblock.s_feature_incompat
+        for f_id in [0x1, 0x4, 0x10, 0x80, 0x200, 0x1000, 0x4000, 0x10000]:
+            if incompat & f_id:
+                raise RuntimeError("Unsupported feature ({:#x})".format(f_id))
         self._block_size = 2 ** (10 + self._superblock.s_log_block_size)
 
     def read_dir(self, inode_num):
@@ -398,6 +402,11 @@ class Application(object):
         self._do_extract()
 
 
+def exception_handler(exception_type, exception, traceback):
+    del traceback
+    sys.stderr.write("{}: {}\n".format(exception_type.__name__, exception))
+
+
 if __name__ == '__main__':
-    app = Application()
-    app.run()
+    sys.excepthook = exception_handler
+    Application().run()
