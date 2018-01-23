@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 """
     ext4extract - Ext4 data extracting tool
     Copyright (C) 2017, HexEdit (IFProject)
@@ -18,15 +16,4 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-import sys
-from app import Application
-
-
-def exception_handler(exception_type, exception, traceback):
-    del traceback
-    sys.stderr.write("{}: {}\n".format(exception_type.__name__, exception))
-
-
-if __name__ == '__main__':
-    sys.excepthook = exception_handler
-    Application().run()
+from .ext4 import Ext4
