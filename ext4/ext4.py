@@ -18,6 +18,7 @@
 
 from .structs import *
 from .direntry import DirEntry
+from .metadata import Metadata
 
 
 class Ext4(object):
@@ -143,6 +144,12 @@ class Ext4(object):
     def read_link(self, inode_num):
         inode = self._read_inode(inode_num)
         return self._read_data(inode)[:inode.i_size_lo].decode('utf-8')
+
+    def read_meta(self, inode_num):
+        inode = self._read_inode(inode_num)
+        # TODO Read extended attributes
+        return Metadata(inode_num, inode.i_mode >> 12 & 0xf, inode.i_size_lo, inode.i_ctime, inode.i_mtime, inode.i_uid,
+                        inode.i_gid, inode.i_mode & 0xfff)
 
     @property
     def root(self):
