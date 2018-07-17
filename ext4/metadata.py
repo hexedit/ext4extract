@@ -18,16 +18,24 @@
 
 
 class Metadata:
-    def __init__(self, inode, itype, size, ctime, mtime, uid=0, gid=0, mode=0):
-        self._inode = inode
-        self._type = itype
-        self._size = size
-        self._ctime = ctime
-        self._mtime = mtime
-        self._uid = uid
-        self._gid = gid
-        self._mode = mode
+    def __init__(self, inode, itype, size, ctime, mtime, uid=0, gid=0, mode=0, xattr={}):
+        self._attr = {
+            'inode': inode,
+            'type': itype,
+            'size': size,
+            'ctime': ctime,
+            'mtime': mtime,
+            'uid': uid,
+            'gid': gid,
+            'mode': mode
+        }
+        self._xattr = xattr
 
     def __str__(self):
-        # TODO fixed list, format mode, extended attributes
-        return "{_type} {_size} {_ctime} {_mtime} {_uid} {_gid} {_mode}".format(**vars(self))
+        attr_s = []
+        for attr in self._attr:
+            attr_s.append("{key}=\"{value}\"".format(key=attr, value=self._attr[attr]))
+        for attr in self._xattr:
+            attr_s.append(attr if self._xattr[attr] is None
+                          else "{key}=\"{value}\"".format(key=attr, value=self._xattr[attr]))
+        return " ".join(attr_s)

@@ -62,9 +62,7 @@ class Application(object):
         for de in dir_data:
             processed = False
             if self._metatbl is not None:
-                meta = self._ext4.read_meta(de.inode)
-                self._metatbl.write("{inode} {meta} {path}".format(inode=de.inode, meta=meta,
-                                                                   path=os.path.join(path, de.name)) + os.linesep)
+                self._write_meta(de, path)
             if de.type == 1:  # regular file
                 data, atime, mtime = self._ext4.read_file(de.inode)
                 file = open(os.path.join(path, de.name), 'w+b')
@@ -80,7 +78,7 @@ class Application(object):
                 link = os.path.join(path, de.name)
                 link_to = self._ext4.read_link(de.inode)
                 if self._symltbl is not None:
-                    self._symltbl.write("{link} -> {target}".format(link=link, target=link_to) + os.linesep)
+                    self._write_symlink(link, link_to)
                 if self._args.skip_symlinks:
                     continue
                 if self._args.text_symlinks:
@@ -95,6 +93,22 @@ class Application(object):
                 processed = True
             if processed and self._args.verbose:
                 print(os.path.join(os.path.sep, path.lstrip(self._args.directory), de.name))
+
+    def _write_symlink(self, link, link_to):
+        self._symltbl.write(
+            "path=\"{link}\" target=\"{target}\"".format(
+                link=link,
+                target=link_to
+            ) + os.linesep)
+
+    def _write_meta(self, direntry, path):
+        meta = self._ext4.read_meta(direntry.inode)
+        self._metatbl.write(
+            "inode=\"{inode}\" path=\"{path}\" {meta}".format(
+                inode=direntry.inode,
+                meta=meta,
+                path=os.path.join(path, direntry.name)
+            ) + os.linesep)
 
     def _do_extract(self):
         self._ext4 = Ext4(self._args.filename)

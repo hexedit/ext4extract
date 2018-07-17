@@ -145,11 +145,58 @@ class Ext4(object):
         inode = self._read_inode(inode_num)
         return self._read_data(inode)[:inode.i_size_lo].decode('utf-8')
 
+    def read_xattr(self, inode):
+        if inode.i_file_acl_lo == 0:
+            return {}
+
+        self._ext4.seek(inode.i_file_acl_lo * self._block_size)
+        xattr_hdr = make_xattr_header(self._ext4.read(32))
+        if xattr_hdr.h_magic != 0xea020000:
+            raise RuntimeError("Bad xattr magic")
+        xattr_data = self._ext4.read((self._block_size * xattr_hdr.h_blocks) - 32)
+
+        xattr_prefix = [
+            "",
+            "user.",
+            "system.posix_acl_access",
+            "system.posix_acl_default",
+            "trusted.",
+            "security.",
+            "system.",
+            "system.richacl"
+        ]
+
+        xattr = {}
+        offset = 0
+        while offset < len(xattr_data):
+            entry = make_xattr_entry(xattr_data[offset:offset + 16])
+            if (entry.e_name_len, entry.e_name_index, entry.e_value_offs, entry.e_value_inum) == (0, 0, 0, 0):
+                break
+            offset += 16
+
+            name = xattr_data[offset:offset + entry.e_name_len].decode('utf-8')
+            offset += entry.e_name_len
+
+            key = xattr_prefix[entry.e_name_index] + name
+            value = xattr_data[entry.e_value_offs:entry.e_value_offs + entry.e_value_size]
+            if value == b'':
+                value = None
+            xattr[key] = value
+
+        return xattr
+
     def read_meta(self, inode_num):
         inode = self._read_inode(inode_num)
-        # TODO Read extended attributes
-        return Metadata(inode_num, inode.i_mode >> 12 & 0xf, inode.i_size_lo, inode.i_ctime, inode.i_mtime, inode.i_uid,
-                        inode.i_gid, inode.i_mode & 0xfff)
+        return Metadata(
+            inode=inode_num,
+            itype=inode.i_mode >> 12 & 0xf,
+            size=inode.i_size_lo,
+            ctime=inode.i_ctime,
+            mtime=inode.i_mtime,
+            uid=inode.i_uid,
+            gid=inode.i_gid,
+            mode=inode.i_mode & 0xfff,
+            xattr=self.read_xattr(inode))
 
     @property
     def root(self):
