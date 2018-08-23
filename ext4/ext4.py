@@ -66,6 +66,7 @@ class Ext4(object):
             if hdr.eh_depth == 0:
                 entry = make_extent_entry(entry_raw)
                 self._ext4.seek(entry.ee_start_lo * self._block_size)
+                data += b'\0' * ((entry.ee_block * self._block_size) - len(data))
                 data += self._ext4.read(self._block_size * entry.ee_len)
             else:
                 index = make_extent_index(entry_raw)
