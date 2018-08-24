@@ -65,16 +65,15 @@ class Ext4(object):
             entry_raw = extent_block[raw_offset:raw_offset + 12]
             if hdr.eh_depth == 0:
                 entry = make_extent_entry(entry_raw)
+                _start = entry.ee_block * self._block_size
+                _size = entry.ee_len * self._block_size
                 self._ext4.seek(entry.ee_start_lo * self._block_size)
-                data += b'\0' * ((entry.ee_block * self._block_size) - len(data))
-                data += self._ext4.read(self._block_size * entry.ee_len)
+                data[_start:_start + _size] = self._ext4.read(_size)
             else:
                 index = make_extent_index(entry_raw)
                 self._ext4.seek(index.ei_leaf_lo * self._block_size)
                 lower_block = self._ext4.read(self._block_size)
-                data = self._read_extent(data, lower_block)
-
-        return data
+                self._read_extent(data, lower_block)
 
     def _read_data(self, inode):
         data = b''
@@ -84,7 +83,8 @@ class Ext4(object):
         elif inode.i_flags & 0x10000000 or (inode.i_mode & 0xf000 == 0xa000 and inode.i_size_lo <= 60):
             data = inode.i_block
         elif inode.i_flags & 0x80000:
-            data = self._read_extent(data, inode.i_block)
+            data = bytearray(inode.i_size_lo)
+            self._read_extent(data, inode.i_block)
         else:
             raise RuntimeError("Mapped Inodes are not supported")
 
