@@ -6,7 +6,7 @@ Currently supports only 32-bit ext4, using extents, extracts only files/director
 usage
 -----
 
-`ext4extract.py [-h] [-v] [-D DIRECTORY]
+`ext4extract.py [-h] [-v] [-D DIRECTORY] [-S SYMLINKS] [-M METADATA]
                       [--save-symlinks | --text-symlinks | --empty-symlinks | --skip-symlinks]
                       filename`
 
@@ -21,6 +21,10 @@ usage
 * **-v, --verbose** - verbose output
 
 * **-D DIRECTORY, --directory DIRECTORY** - set output directory
+
+* **-S SYMLINKS, --dump-symlink-table SYMLINKS** - generate symlink table
+
+* **-M METADATA, --dump-metadata METADATA** - generate inode metadata table (including extended attributes)
 
 * **Symlink options (mutually-exclusive)**
 
