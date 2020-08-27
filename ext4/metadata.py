@@ -33,9 +33,16 @@ class Metadata:
 
     def __str__(self):
         attr_s = []
-        for attr in self._attr:
-            attr_s.append("{key}=\"{value}\"".format(key=attr, value=self._attr[attr]))
-        for attr in self._xattr:
-            attr_s.append(attr if self._xattr[attr] is None
-                          else "{key}=\"{value}\"".format(key=attr, value=self._xattr[attr]))
+        for key, value in self._attr.items():
+            attr_s.append("{key}=\"{value}\"".format(
+                key=key,
+                value=value))
+        for key, value in self._xattr.items():
+            attr_s.append(
+                key if value is None else "{key}=\"{value}\"".format(
+                    key=key,
+                    value=value.decode(
+                        'unicode_escape').encode(
+                        'unicode_escape').decode(
+                        'ascii')))
         return " ".join(attr_s)

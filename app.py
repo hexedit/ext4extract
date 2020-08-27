@@ -50,19 +50,22 @@ class Application(object):
         except SystemExit:
             sys.exit(2)
 
-    def _extract_dir(self, dir_data, path, name=None):
+    def _extract_dir(self, dir_data, path, rpath='', name=None):
         assert self._ext4 is not None
         if name is not None:
             path = os.path.join(path, name)
+            rpath = rpath + '/' + name
         try:
             os.mkdir(path)
         except FileExistsError:
             pass
 
         for de in dir_data:
+            if de.name == '.' or de.name == '..':
+                continue
             processed = False
             if self._metatbl is not None:
-                self._write_meta(de, path)
+                self._write_meta(de, rpath)
             if de.type == 1:  # regular file
                 data, atime, mtime = self._ext4.read_file(de.inode)
                 file = open(os.path.join(path, de.name), 'w+b')
@@ -71,14 +74,12 @@ class Application(object):
                 os.utime(file.name, (atime, mtime))
                 processed = True
             elif de.type == 2:  # directory
-                if de.name == '.' or de.name == '..':
-                    continue
-                self._extract_dir(self._ext4.read_dir(de.inode), path, de.name)
+                self._extract_dir(self._ext4.read_dir(de.inode), path, rpath, de.name)
             elif de.type == 7:  # symlink
                 link = os.path.join(path, de.name)
                 link_to = self._ext4.read_link(de.inode)
                 if self._symltbl is not None:
-                    self._write_symlink(link, link_to)
+                    self._write_symlink(rpath + '/' + de.name, link_to)
                 if self._args.skip_symlinks:
                     continue
                 if self._args.text_symlinks:
@@ -92,7 +93,7 @@ class Application(object):
                     os.rename(link + ".tmp", link)
                 processed = True
             if processed and self._args.verbose:
-                print(os.path.join(os.path.sep, path.lstrip(self._args.directory), de.name))
+                print(rpath + '/' + de.name)
 
     def _write_symlink(self, link, link_to):
         self._symltbl.write(
@@ -104,8 +105,7 @@ class Application(object):
     def _write_meta(self, direntry, path):
         meta = self._ext4.read_meta(direntry.inode)
         self._metatbl.write(
-            "inode=\"{inode}\" path=\"{path}\" {meta}".format(
-                inode=direntry.inode,
+            "path=\"{path}\" {meta}".format(
                 meta=meta,
                 path=os.path.join(path, direntry.name)
             ) + os.linesep)
