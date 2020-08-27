@@ -28,6 +28,8 @@ __EXTENT_INDEX_PACK__ = "<IIHH"
 __EXTENT_ENTRY_PACK__ = "<IHHI"
 __DIR_ENTRY_PACK__ = "<IHH"
 __DIR_ENTRY_V2_PACK__ = "<IHBB"
+__XATTR_HEADER_PACK__ = "<IIIII12s"
+__XATTR_ENTRY_PACK__ = "<BBHIII"
 
 __SuperBlock__ = namedtuple('Ext4SuperBlock', """
     s_inodes_count
@@ -149,6 +151,24 @@ __DirEntryV2__ = namedtuple('Ext4DirEntryV2', """
     file_type
 """)
 
+__XattrHeader__ = namedtuple('Ext4XattrHeader', """
+    h_magic
+    h_refcount
+    h_blocks
+    h_hash
+    h_checksum
+    h_reserved
+""")
+
+__XattrEntry__ = namedtuple('Ext4XattrEntry', """
+    e_name_len
+    e_name_index
+    e_value_offs
+    e_value_inum
+    e_value_size
+    e_hash
+""")
+
 
 def make_superblock(data):
     return __SuperBlock__._make(unpack(__SUPERBLOCK_PACK__, data))
@@ -180,3 +200,11 @@ def make_dir_entry(data):
 
 def make_dir_entry_v2(data):
     return __DirEntryV2__._make(unpack(__DIR_ENTRY_V2_PACK__, data))
+
+
+def make_xattr_header(data):
+    return __XattrHeader__._make(unpack(__XATTR_HEADER_PACK__, data))
+
+
+def make_xattr_entry(data):
+    return __XattrEntry__._make(unpack(__XATTR_ENTRY_PACK__, data))

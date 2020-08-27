@@ -16,8 +16,11 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+from struct import unpack
+
 from .structs import *
 from .direntry import DirEntry
+from .metadata import Metadata
 
 
 class Ext4(object):
@@ -98,6 +101,11 @@ class Ext4(object):
             + (bg_inode_idx * self._superblock.s_inode_size)
         self._ext4.seek(inode_offset)
         return make_inode(self._ext4.read(128))
+
+    def _read_inode_extra(self, inode_num):
+        inode = self._read_inode(inode_num)
+        extra = self._ext4.read(self._superblock.s_inode_size - 128)
+        return inode, extra
 
     def _read_extent(self, data, extent_block):
         hdr = make_extent_header(extent_block[:12])
@@ -197,6 +205,75 @@ class Ext4(object):
     def read_link(self, inode_num):
         inode = self._read_inode(inode_num)
         return self._read_data(inode)[:inode.i_size_lo].decode('utf-8')
+
+    def read_xattr(self, inode, extra=None):
+        xattr = {}
+
+        if extra:
+            extra_isize, = unpack('<I', extra[:4])
+            extra_data = extra[extra_isize:]
+            if extra_data:
+                xattr_ihdr, = unpack('<I', extra_data[:4])
+                if xattr_ihdr == 0xea020000:
+                    xattr.update(self._parse_xattr(extra_data[4:]))
+
+        if inode.i_file_acl_lo:
+            self._ext4.seek(inode.i_file_acl_lo * self._block_size)
+            hdr_raw = self._ext4.read(32)
+            xattr_hdr = make_xattr_header(hdr_raw)
+            if xattr_hdr.h_magic != 0xea020000:
+                raise RuntimeError("Bad xattr magic")
+            xattr_data = self._ext4.read((self._block_size * xattr_hdr.h_blocks) - 32)
+            xattr.update(self._parse_xattr(hdr_raw + xattr_data, 32))
+
+        return xattr
+
+    def _parse_xattr(self, xattr_data, offset=0):
+        xattr_prefix = [
+            "",
+            "user.",
+            "system.posix_acl_access",
+            "system.posix_acl_default",
+            "trusted.",
+            "security.",
+            "system.",
+            "system.richacl"
+        ]
+        xattr = {}
+
+        while offset < len(xattr_data):
+            entry = make_xattr_entry(xattr_data[offset:offset + 16])
+            if (entry.e_name_len, entry.e_name_index) == (0, 0):
+                break
+            offset += 16
+
+            name = xattr_data[offset:offset + entry.e_name_len].decode('ascii')
+            offset += entry.e_name_len
+
+            if entry.e_value_inum:
+                value = self._read_data(self._read_inode(entry.e_value_inum))
+            else:
+                value = xattr_data[entry.e_value_offs:entry.e_value_offs + entry.e_value_size]
+            if value == b'':
+                value = None
+
+            key = xattr_prefix[entry.e_name_index] + name
+            xattr[key] = value
+
+        return xattr
+
+    def read_meta(self, inode_num):
+        inode, extra = self._read_inode_extra(inode_num)
+        return Metadata(
+            inode=inode_num,
+            itype=inode.i_mode >> 12 & 0xf,
+            size=inode.i_size_lo,
+            ctime=inode.i_ctime,
+            mtime=inode.i_mtime,
+            uid=inode.i_uid,
+            gid=inode.i_gid,
+            mode=inode.i_mode & 0xfff,
+            xattr=self.read_xattr(inode, extra))
 
     @property
     def root(self):
