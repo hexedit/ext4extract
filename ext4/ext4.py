@@ -26,6 +26,7 @@ class Ext4(object):
         self._ext4 = None
         self._superblock = None
         self._block_size = 1024
+        self._backup_bgs = []
 
         if filename is not None:
             self.load(filename)
@@ -40,18 +41,61 @@ class Ext4(object):
                 mounted_at = "not mounted"
             return "Volume name: {}, last mounted at: {}".format(volume_name, mounted_at)
 
+    @property
+    def _has_sparse_super(self):
+        return bool(self._superblock.s_feature_ro_compat & 0x1)
+
+    @property
+    def _has_sparse_super2(self):
+        return bool(self._superblock.s_feature_compat & 0x200)
+
     def _read_group_descriptor(self, bg_num):
         gd_offset = (self._superblock.s_first_data_block + 1) * self._block_size \
                     + (bg_num * self._superblock.s_desc_size)
         self._ext4.seek(gd_offset)
         return make_group_descriptor(self._ext4.read(32))
 
+    @staticmethod
+    def _test_root(a, b):
+        while True:
+            if a < b:
+                return False
+            if a == b:
+                return True
+            if a % b != 0:
+                return False
+            a /= b
+
+    def _bg_has_super(self, bg_num):
+        if bg_num == 0:
+            return True
+        if self._has_sparse_super2:
+            if bg_num in self._backup_bgs:
+                return True
+            return False
+        if bg_num <= 1:
+            return True
+        if not self._has_sparse_super:
+            return True
+        if not bg_num & 1:
+            return False
+        if self._test_root(bg_num, 3):
+            return True
+        if self._test_root(bg_num, 5):
+            return True
+        if self._test_root(bg_num, 7):
+            return True
+        return False
+
     def _read_inode(self, inode_num):
         inode_bg_num = (inode_num - 1) // self._superblock.s_inodes_per_group
         bg_inode_idx = (inode_num - 1) % self._superblock.s_inodes_per_group
         group_desc = self._read_group_descriptor(inode_bg_num)
-        inode_offset = \
-            (group_desc.bg_inode_table_lo * self._block_size) \
+        table_start = (inode_bg_num * self._superblock.s_blocks_per_group) \
+            + group_desc.bg_inode_table_lo
+        if not self._bg_has_super(inode_bg_num):
+            table_start -= 2
+        inode_offset = (table_start * self._block_size) \
             + (bg_inode_idx * self._superblock.s_inode_size)
         self._ext4.seek(inode_offset)
         return make_inode(self._ext4.read(128))
@@ -66,15 +110,15 @@ class Ext4(object):
             entry_raw = extent_block[raw_offset:raw_offset + 12]
             if hdr.eh_depth == 0:
                 entry = make_extent_entry(entry_raw)
+                _start = entry.ee_block * self._block_size
+                _size = entry.ee_len * self._block_size
                 self._ext4.seek(entry.ee_start_lo * self._block_size)
-                data += self._ext4.read(self._block_size * entry.ee_len)
+                data[_start:_start + _size] = self._ext4.read(_size)
             else:
                 index = make_extent_index(entry_raw)
                 self._ext4.seek(index.ei_leaf_lo * self._block_size)
                 lower_block = self._ext4.read(self._block_size)
-                data = self._read_extent(data, lower_block)
-
-        return data
+                self._read_extent(data, lower_block)
 
     def _read_data(self, inode):
         data = b''
@@ -84,7 +128,8 @@ class Ext4(object):
         elif inode.i_flags & 0x10000000 or (inode.i_mode & 0xf000 == 0xa000 and inode.i_size_lo <= 60):
             data = inode.i_block
         elif inode.i_flags & 0x80000:
-            data = self._read_extent(data, inode.i_block)
+            data = bytearray(inode.i_size_lo)
+            self._read_extent(data, inode.i_block)
         else:
             raise RuntimeError("Mapped Inodes are not supported")
 
@@ -101,6 +146,11 @@ class Ext4(object):
             if incompat & f_id:
                 raise RuntimeError("Unsupported feature ({:#x})".format(f_id))
         self._block_size = 2 ** (10 + self._superblock.s_log_block_size)
+        if self._has_sparse_super2:
+            self._ext4.seek(0x64c)
+            self._backup_bgs = list(unpack('<2I', self._ext4.read(8)))
+        else:
+            self._backup_bgs = []
 
     def read_dir(self, inode_num):
         inode = self._read_inode(inode_num)
@@ -112,9 +162,13 @@ class Ext4(object):
             entry = DirEntry()
             if self._superblock.s_feature_incompat & 0x2:
                 dir_entry = make_dir_entry_v2(entry_raw)
+                if dir_entry.inode == 0:
+                    break
                 entry.type = dir_entry.file_type
             else:
                 dir_entry = make_dir_entry(entry_raw)
+                if dir_entry.inode == 0:
+                    break
                 entry_inode = self._read_inode(dir_entry.inode)
                 inode_type = entry_inode.i_mode & 0xf000
                 if inode_type == 0x1000:
