@@ -161,9 +161,13 @@ class Ext4(object):
             entry = DirEntry()
             if self._superblock.s_feature_incompat & 0x2:
                 dir_entry = make_dir_entry_v2(entry_raw)
+                if dir_entry.inode == 0:
+                    break
                 entry.type = dir_entry.file_type
             else:
                 dir_entry = make_dir_entry(entry_raw)
+                if dir_entry.inode == 0:
+                    break
                 entry_inode = self._read_inode(dir_entry.inode)
                 inode_type = entry_inode.i_mode & 0xf000
                 if inode_type == 0x1000:
